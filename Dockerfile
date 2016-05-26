@@ -1,6 +1,6 @@
 FROM alpine
 
-COPY ick /
+COPY ack /
 
-CMD ick
+CMD /ack
 EXPOSE 8080
