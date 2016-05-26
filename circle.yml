@@ -1,0 +1,31 @@
+machine:
+  environment:
+    GOVERSION: 1.6.2
+    GOPATH: /home/ubuntu/go_workspace
+    GOROOT: /home/ubuntu/go
+    PATH: /home/ubuntu/google-cloud-sdk/bin:$PATH
+  python:
+    version: 2.7.3
+  services:
+    - docker
+
+dependencies:
+  override:
+    - make fix_circle_go
+    - ./scripts/gcloud_setup.sh
+
+  cache_directories:
+    - ~/google-cloud-sdk
+    - ~/go
+
+test:
+  override:
+    - make build
+
+deployment:
+  quay:
+    branch: [master]
+    commands:
+      - docker login -p "$QUAY_PASSWD" -u "$QUAY_USER" -e "unused@unused" quay.io
+      - make build
+      - make deploy
