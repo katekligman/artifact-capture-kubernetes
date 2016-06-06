@@ -1,34 +1,37 @@
 package main
 
 import (
+  "os/exec"
   "crypto/md5"
   "encoding/base64"
   "fmt"
   "log"
   "net/http"
   "time"
+  "io/ioutil"
   "golang.org/x/oauth2/google"
   "google.golang.org/cloud"
   "google.golang.org/cloud/storage"
   "golang.org/x/net/context"
   "github.com/gorilla/mux"
   "github.com/spf13/viper"
-  "sourcegraph.com/sourcegraph/go-selenium"
   "encoding/json"
   "github.com/asaskevich/govalidator"
   "mime"
+  "os"
+  "strconv"
+  "math/rand"
 )
 
 func main() {
 
   viper.SetEnvPrefix("IC")
   viper.SetDefault("PORT", "8080")
-  viper.SetDefault("GRID_PORT", "4444")
   viper.AutomaticEnv()
   
   // Check for the required environment settings
   var settings = [...]string {"API_KEY", "GCE_IMAGE_BUCKET", 
-                         "GCE_AUTH", "GCE_PROJECT", "GRID_IP"} 
+                         "GCE_AUTH", "GCE_PROJECT"}
   for _, key := range settings {
     if !viper.IsSet(key) {
         log.Fatal("Need to set environment variable: IC_" + key)
@@ -42,10 +45,11 @@ func main() {
 
 // Artifact JSON schema returned by the service
 type Artifact struct {
-  URL string `json:"url"`
-  ImageURL string  `json:"image"`
-  HtmlURL string  `json:"html"`
-  Code int  `json:"code"`
+  OrigImageURL string  `json:"orig_image_url"`
+  OrigHtmlURL string  `json:"orig_html_url"`
+  DestImageURL string  `json:"dest_image_url"`
+  DestHtmlURL string  `json:"dest_html_url"`
+  CompareMetric int  `json:"compare_metric"`
 }
 
 // Index is the server entrypoint
@@ -54,87 +58,70 @@ func Index(w http.ResponseWriter, r *http.Request) {
     return
   }
 
-  // artifact target url
-  url := r.URL.Query().Get("url")
-  if !govalidator.IsURL(url) {
+  // Origin URL
+  orig_url := r.URL.Query().Get("orig_url")
+  if !govalidator.IsURL(orig_url) {
     return
   }
 
-  art := GetArtifact(url)
+  // Destination URL
+  dest_url := r.URL.Query().Get("dest_url")
+  if !govalidator.IsURL(dest_url) {
+    return
+  }
+
+  orig_image, orig_html, orig_code := ScreenShot(orig_url)
+  //orig_image2, _, _ := ScreenShot(orig_url) // 2nd shot for comparison
+  dest_image, dest_html, dest_code := ScreenShot(dest_url)
+
+  if orig_code != 200 || dest_code != 200 {
+    return
+  }
+
+  var art Artifact
+  art.OrigImageURL = StoreArtifact(orig_image, "png")
+  art.DestImageURL = StoreArtifact(dest_image, "png")
+  art.OrigHtmlURL = StoreArtifact(orig_html, "html")
+  art.DestHtmlURL = StoreArtifact(dest_html, "html")
+
+  os.Remove(orig_image)
+  os.Remove(dest_image)
+  os.Remove(orig_html)
+  os.Remove(dest_html)
+
   data, _ := json.Marshal(art)
   w.Write(data)
 }
 
-func GetArtifact(url string) Artifact {
-  imageData, htmlData, code := ScreenShot(url)
-
-  var art Artifact
-  art.URL = url
-  art.Code = code
-  art.ImageURL = StoreArtifact(imageData, "png")
-  art.HtmlURL = StoreArtifact([]byte(htmlData), "html")
-  return art
+func makeUniquePath(path string, prefix string, suffix string) (string) {
+  ts := strconv.Itoa(int(time.Now().Unix()))
+  juice := strconv.Itoa(rand.Int())
+  return path + "/" + prefix + "-" + ts + "-" + juice + suffix
 }
 
-// ScreenShot produces a png screenshot, html, and http code for a url
-func ScreenShot(url string) ([]byte, string, int) {
-  var wd selenium.WebDriver
-  var err error
-  var data []byte = nil
-  var html string = ""
-  var code int = 0
-
-  gridURL := fmt.Sprintf("http://%s:%s/wd/hub", viper.Get("GRID_IP"), viper.Get("GRID_PORT"))
-
-  caps := selenium.Capabilities(map[string]interface{}{"browserName": "firefox"})
-
-  if wd, err = selenium.NewRemote(caps, gridURL); err != nil {
-    panic(err)
+// Given a url, produce image path, html path, and status code
+func ScreenShot(url string) (string, string, int) {
+ 
+  imagePath := makeUniquePath("/tmp", "image", ".png")
+  htmlPath := makeUniquePath("/tmp", "html", ".html")
+  args := []string{"snap.js", url, "1024", imagePath, htmlPath}
+  out, err := exec.Command("/bin/phantomjs", args...).Output()
+  if err != nil {
+    log.Fatal(err)
   }
 
-  if err = wd.Get(url); err != nil {
-    data = nil
-  }
-
-/* Bugged in Chrome, not needed with FireFox
-  if window, err = wd.CurrentWindowHandle(); err != nil {
-    to := selenium.Size{Width: 1024, Height: 5000}
-    wd.ResizeWindow(window, to)
-  }
-*/
-
-  time.Sleep(15 * time.Second)
-
-  if data, err = wd.Screenshot(); err != nil {
-    data = nil
-  }
-
-  if html, err = wd.PageSource(); err != nil {
-    html = ""
-  }
-
-  var resp *http.Response
-  timeout := time.Duration(60 * time.Second)
-  client := http.Client {
-    Timeout: timeout,
-  }
-
-  if resp, err = client.Get(url); err != nil {
-    fmt.Print("Timeout for http get")
-  } else {
-    code = resp.StatusCode
-    defer resp.Body.Close()
-  }
-
-  return data, html, code
+  code, _ := strconv.Atoi(string(out))
+  return imagePath, htmlPath, code
 }
 
 // StoreArtifact saves data to Google Cloud Storage
-func StoreArtifact(data []byte, ext string) string {
+func StoreArtifact(path string, ext string) string {
 
   var contentType string
 
   contentType = mime.TypeByExtension("." + ext)
+
+  data, _ := ioutil.ReadFile(path)
 
   fileName := fmt.Sprintf("%x-%d.%s", 
                 md5.Sum(data), 
@@ -150,7 +137,7 @@ func StoreArtifact(data []byte, ext string) string {
   wc.ContentType = contentType 
   wc.ACL = []storage.ACLRule{{storage.AllUsers, storage.RoleReader}}
 
-  if _, err := wc.Write([]byte(data)); err != nil {
+  if _, err := wc.Write(data); err != nil {
     log.Fatal(err)
   }
   if err := wc.Close(); err != nil {

@@ -24,7 +24,7 @@ test:
 
 deployment:
   quay:
-    branch: [master]
+    branch: [v2]
     commands:
       - docker login -p "$QUAY_PASSWD" -u "$QUAY_USER" -e "unused@unused" quay.io
       - make build

@@ -1,10 +1,11 @@
 apiVersion: v1
-kind: ReplicationController
+kind: Service
 metadata:
   name: __APP__
   labels:
     app: __APP__
 spec:
+  type: LoadBalancer
   replicas: 1
   selector:
     app: __APP__
@@ -17,10 +18,10 @@ spec:
       - name: __APP__
         image: __IMAGE__
         ports:
-          - containerPort: 4444
+          - port: 8080
+            containerPort: 8080
+            targetPort: 8080
         env:
-          - name: IC_GRID_IP
-            value: __GRID_IP__
           - name: IC_GCE_AUTH
             value: __GCLOUD_KEY__
           - name: IC_GCE_PROJECT

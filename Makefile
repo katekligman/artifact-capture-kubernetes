@@ -24,20 +24,19 @@ push:
 deploy: push update_deployment
 
 update_deployment:
-	-kubectl delete rc $(APP) --namespace=$(KUBE_ENV)
+	-kubectl delete service $(APP) --namespace=$(KUBE_ENV)
 	sleep 60
 
 	sed -e "s#__BUILD__#$(BUILD)#" \
 		-e "s#__CONTAINER_NAME__#$(APP)#" \
 		-e "s#__APP__#$(APP)#" \
 		-e "s#__IMAGE__#$(DOCKER_IMAGE)#" \
-		-e "s#__GRID_IP__#selenium-hub#" \
 		-e "s#__GCLOUD_PROJECT_SECRET__#$(GCLOUD_PROJECT_SECRET)#" \
 		-e "s#__GCLOUD_PROJECT_ID__#$(GCLOUD_PROJECT_ID)#" \
 		-e "s#__GCLOUD_BUCKET__#$(GCLOUD_BUCKET)#" \
 		-e "s#__GCLOUD_KEY__#$(GCLOUD_KEY)#" \
 		-e "s#__IC_API_KEY__#$(IC_API_KEY)#" \
-	scripts/k8s/ack-rc.yml \
+	scripts/k8s/service.yml \
 	| kubectl apply --namespace=$(KUBE_ENV) -f -
 
 deps-circle:
@@ -46,20 +45,6 @@ deps-circle:
 
 fix_circle_go:
 	scripts/install-go.sh
-
-deploy-selenium:
-	kubectl apply --filename=scripts/k8s/selenium-hub-rc.yml --namespace=$(KUBE_ENV)
-	kubectl apply --filename=scripts/k8s/selenium-hub-service.yml --namespace=$(KUBE_ENV)
-	kubectl apply --filename=scripts/k8s/selenium-agent-rc-firefox.yml --namespace=$(KUBE_ENV)
-
-delete-selenium:
-	kubectl delete --filename=scripts/k8s/selenium-hub-rc.yml --namespace=$(KUBE_ENV)
-	kubectl delete --filename=scripts/k8s/selenium-hub-service.yml --namespace=$(KUBE_ENV)
-	kubectl delete --filename=scripts/k8s/selenium-agent-rc-firefox.yml --namespace=$(KUBE_ENV)
-
-selenium-port-forward:
-	$(eval PODNAME:=$(shell kubectl get pods --selector="app=selenium-hub" --output=template --template="{{with index .items 0}}{{.metadata.name}}{{end}}" --namespace=$(KUBE_ENV)))
-	kubectl port-forward $(PODNAME) 4444:4444 --namespace=$(KUBE_ENV)
 
 help: ## print list of tasks and descriptions
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
