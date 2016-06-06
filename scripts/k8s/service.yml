@@ -6,7 +6,9 @@ metadata:
     app: __APP__
 spec:
   type: LoadBalancer
-  replicas: 1
+  ports:
+    - port: 8080
+      targetPort: 8080
   selector:
     app: __APP__
   template:

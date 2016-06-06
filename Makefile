@@ -1,4 +1,4 @@
-APP := artifact-capture-kubernetes
+APP := janus
 REGISTRY := $(REGISTRY)
 
 ifeq ($(CIRCLE_BUILD_NUM),)
